@@ -12,7 +12,7 @@ class ThreadPool {
 
     public:
 
-        ThreadPool() : shutdown(false) {}
+        ThreadPool() : shutdown_(false) {}
 
         ~ThreadPool() {
             stop();
@@ -20,7 +20,7 @@ class ThreadPool {
 
         void start(int num) {
 
-            if (!workers.empty()) {
+            if (!workers_.empty()) {
                 throw std::runtime_error("ThreadPool already started");
             }
 
@@ -33,45 +33,45 @@ class ThreadPool {
             num = std::min(num, num_threads);
 
             for(int i = 0; i < num; i++){
-                workers.emplace_back(&ThreadPool::loop, this);
+                workers_.emplace_back(&ThreadPool::loop, this);
             }
         }
 
         template<typename F>
         bool enqueue(F&& task) {
             {
-                std::lock_guard<std::mutex> lock(mutex);
+                std::lock_guard<std::mutex> lock(mutex_);
 
-                if (shutdown) {
+                if (shutdown_) {
                     return false;
                 }
 
-                tasks.push(std::forward<F>(task));
+                tasks_.push(std::forward<F>(task));
             }
 
-            condition.notify_one();
+            condition_.notify_one();
             return true;
         }
 
 
         void stop() {
 
-            if (shutdown) {
+            if (shutdown_) {
                 return;
             }
 
             {
-                std::unique_lock<std::mutex> lock(mutex);
-                shutdown = true;
+                std::unique_lock<std::mutex> lock(mutex_);
+                shutdown_ = true;
             }
 
-            condition.notify_all();
+            condition_.notify_all();
             
-            for(std::thread& worker: workers){
+            for(std::thread& worker: workers_){
                 worker.join();
             }
 
-            workers.clear();
+            workers_.clear();
         }
 
     private:
@@ -83,18 +83,18 @@ class ThreadPool {
                 std::function<void()> task;
 
                 {
-                    std::unique_lock<std::mutex> lock(mutex);
+                    std::unique_lock<std::mutex> lock(mutex_);
 
-                    while(tasks.empty() && !shutdown){
-                        condition.wait(lock);
+                    while(tasks_.empty() && !shutdown_){
+                        condition_.wait(lock);
                     }
 
-                    if(shutdown && tasks.empty()){
+                    if(shutdown_ && tasks_.empty()){
                         return;
                     }
 
-                    task = std::move(tasks.front());
-                    tasks.pop();
+                    task = std::move(tasks_.front());
+                    tasks_.pop();
 
                 }
 
@@ -102,11 +102,11 @@ class ThreadPool {
             }
         }
 
-        std::vector<std::thread> workers;
-        std::queue<std::function<void()>> tasks;
-        std::mutex mutex;
-        std::condition_variable condition;
-        bool shutdown;
+        std::vector<std::thread> workers_;
+        std::queue<std::function<void()>> tasks_;
+        std::mutex mutex_;
+        std::condition_variable condition_;
+        bool shutdown_;
 };
 
 #endif
