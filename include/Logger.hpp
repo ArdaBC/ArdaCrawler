@@ -11,6 +11,10 @@
 #include <memory>
 #include <sstream>
 #include <iomanip>
+#include <utility>
+#include <functional>
+#include <stdexcept>
+#include <ctime>
 
 
 namespace LoggerUtils {
@@ -76,9 +80,9 @@ struct LogRecord {
     std::chrono::system_clock::time_point time;
     LoggerUtils::Level level;
     std::thread::id threadId;
-    std::string file;
+    const char* file;
     int line;
-    std::string func;
+    const char* func;
     std::string message;
 };
 
@@ -176,7 +180,7 @@ class FileSink: public Sink {
             }
 
             outfile_ << formatted_time;
-            outfile_ << " [" << LoggerUtils::colorCode(record.level) << LoggerUtils::levelToString(record.level) << "\033[0m" << "] ";
+            outfile_ << " [" << LoggerUtils::levelToString(record.level) << "] ";
             outfile_ << "(tid: " << tid_num << ") ";
             outfile_ << "@ file: " << record.file << " function: " << record.func << " line: " << record.line;
             outfile_ << " Message: " << record.message << '\n';
@@ -224,8 +228,54 @@ class Logger {
             return level_;
         }
 
-        void log() { 
-            //create logrecord
+
+        void log(LoggerUtils::Level level, const char* file,
+                int line, const char* func, const std::string& message) {
+
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                if (level < level_) {
+                    return;
+                }
+            }
+
+            LogRecord rec;
+            rec.time = std::chrono::system_clock::now();
+            rec.level = level;
+            rec.threadId = std::this_thread::get_id();
+            rec.file = file;
+            rec.line = line;
+            rec.func = func;
+            rec.message = message;
+
+            std::vector<std::shared_ptr<Sink>> sinks_copy;
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                sinks_copy = sinks_;
+            }
+
+            for (auto &sink : sinks_copy) {
+                if (!sink) {
+                    continue;
+                }
+                try {
+                    sink->log(rec);
+                } catch (const std::exception& e) {
+                    std::cerr << "Logger: sink threw exception: " << e.what() << '\n';
+                } catch (...) {
+                    std::cerr << "Logger: sink threw unknown exception\n";
+                }
+            }
+
+        }
+
+        template<typename... Args>
+        void log(LoggerUtils::Level level, const char* file,
+                int line, const char* func, Args&&... args) {
+                    
+            std::ostringstream oss;
+            (oss << ... << std::forward<Args>(args));
+            log(level, file, line, func, oss.str());
         }
 
         void addSink(std::shared_ptr<Sink> sink) {
@@ -244,7 +294,7 @@ class Logger {
         }
 
     private:
-        Logger();
+        Logger() : level_(LoggerUtils::Level::TRACE) {}
         ~Logger() = default;
         
         std::mutex mutex_;
