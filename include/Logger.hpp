@@ -15,6 +15,7 @@
 #include <functional>
 #include <stdexcept>
 #include <ctime>
+#include <filesystem>
 
 
 namespace LoggerUtils {
@@ -53,7 +54,7 @@ namespace LoggerUtils {
         }
     }
 
-    inline std::string formatTime(const std::chrono::system_clock::time_point& tp, bool utc = true) {
+    inline std::string formatTime(const std::chrono::system_clock::time_point& tp, bool utc = false) {
         using namespace std::chrono;
         std::time_t t = system_clock::to_time_t(tp);
 
@@ -126,11 +127,15 @@ class ConsoleSink: public Sink {
 
             std::lock_guard<std::mutex> lock(mutex_);
 
-            out << formatted_time;
-            out << " [" << LoggerUtils::colorCode(record.level) << LoggerUtils::levelToString(record.level) << "\033[0m" << "] ";
-            out << "(tid: " << tid_num << ") ";
-            out << "@ file: " << record.file << " function: " << record.func << " line: " << record.line;
-            out << " Message: " << record.message << '\n';
+           out  << '[' << formatted_time << "] "
+                << '[' << LoggerUtils::colorCode(record.level)
+                << LoggerUtils::levelToString(record.level)
+                << "\033[0m] "
+                << "[tid " << std::hex << tid_num << std::dec << "] "
+                << record.file << ':' << record.line << ' '
+                << record.func << "() -> "
+                << record.message << '\n';
+
 
             if (record.level >= LoggerUtils::Level::DEBUG) {
                 out.flush();
@@ -149,16 +154,16 @@ class FileSink: public Sink {
 
     public:
 
-        FileSink(const std::string& path): path_(path) {
-            outfile_.open(path_, std::ios::out | std::ios::app);
+        FileSink(const std::string& base_path) : base_path_(base_path) {
+            openDailyFile();
             if (!outfile_.is_open()) {
-                throw std::runtime_error("FileSink: failed to open log file: " + path_);
+                throw std::runtime_error("FileSink: failed to open log file for " + current_path_.string());
             }
         }
 
         ~FileSink() override {
-            std::lock_guard<std::mutex> lock(mutex_);
-            if (outfile_.is_open()) {
+            std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
+            if (lock.owns_lock() && outfile_.is_open()) {
                 outfile_.close();
             }
         }
@@ -175,15 +180,21 @@ class FileSink: public Sink {
 
             std::lock_guard<std::mutex> lock(mutex_);
 
+            if (!outfile_.is_open() || todayString() != last_date_) {
+                openDailyFile();
+            }
+
             if (!outfile_.is_open()) {
+                std::cerr << "FileSink::log: unable to open log file; dropping log entry\n";
                 return;
             }
 
-            outfile_ << formatted_time;
-            outfile_ << " [" << LoggerUtils::levelToString(record.level) << "] ";
-            outfile_ << "(tid: " << tid_num << ") ";
-            outfile_ << "@ file: " << record.file << " function: " << record.func << " line: " << record.line;
-            outfile_ << " Message: " << record.message << '\n';
+            outfile_<< '[' << formatted_time << "] "
+                    << '[' << LoggerUtils::levelToString(record.level) << "] "
+                    << "[tid " << std::hex << tid_num << std::dec << "] "
+                    << record.file << ':' << record.line << ' '
+                    << record.func << "() -> "
+                    << record.message << '\n';
 
             if (record.level >= LoggerUtils::Level::DEBUG) {
                 outfile_.flush();
@@ -193,9 +204,72 @@ class FileSink: public Sink {
 
     private:
 
+        // return dd-mm-yyyy
+        static std::string todayString(bool utc = false) {
+            auto now = std::chrono::system_clock::now();
+            std::time_t t = std::chrono::system_clock::to_time_t(now);
+            std::tm tm;
+        #if defined(_WIN32)
+            if (utc) gmtime_s(&tm, &t); else localtime_s(&tm, &t);
+        #else
+            if (utc) gmtime_r(&t, &tm); else localtime_r(&t, &tm);
+        #endif
+            std::ostringstream ds;
+            ds << std::setw(2) << std::setfill('0') << tm.tm_mday << '-'
+            << std::setw(2) << std::setfill('0') << (tm.tm_mon + 1) << '-'
+            << (tm.tm_year + 1900);
+            return ds.str();
+        }
+
+
+        void openDailyFile() {
+            try {
+                current_path_.clear();
+                std::filesystem::path base(base_path_);
+                std::string stem = base.stem().string();
+                std::string ext = base.extension().string();
+                std::filesystem::path parent = base.parent_path();
+
+                if (stem.empty()) stem = "log";
+                if (ext.empty()) ext = ".log";
+
+                std::string date = todayString(); //dd-mm-yyyy
+                std::string filename = stem + "." + date + ext; //e.g. app.26-10-2025.log
+
+                std::filesystem::path dest = parent / filename;
+                current_path_ = dest;
+
+                last_date_ = date;
+
+                if (outfile_.is_open()) {
+                    outfile_.close();
+                }
+
+                try {
+                    if (!parent.empty() && !std::filesystem::exists(parent)) {
+                        std::filesystem::create_directories(parent);
+                    }
+                } 
+                catch (const std::exception& e) {
+                    std::cerr << "FileSink::openDailyFile exception: " << e.what() << '\n';
+                } catch (...) {
+                    std::cerr << "FileSink::openDailyFile unknown exception\n";
+                }
+
+                outfile_.open(current_path_, std::ios::out | std::ios::app);
+
+            } catch (const std::exception& e) {
+                std::cerr << "FileSink::openDailyFile exception: " << e.what() << '\n';
+            } catch (...) {
+                std::cerr << "FileSink::openDailyFile unknown exception\n";
+            }
+        }
+
         std::mutex mutex_;
-        std::string path_;
         std::ofstream outfile_;
+        std::string base_path_;
+        std::filesystem::path current_path_;
+        std::string last_date_;
 };
 
 
@@ -229,7 +303,7 @@ class Logger {
         }
 
 
-        void log(LoggerUtils::Level level, const char* file,
+        void logRaw(LoggerUtils::Level level, const char* file,
                 int line, const char* func, const std::string& message) {
 
             {
@@ -275,7 +349,7 @@ class Logger {
                     
             std::ostringstream oss;
             (oss << ... << std::forward<Args>(args));
-            log(level, file, line, func, oss.str());
+            logRaw(level, file, line, func, oss.str());
         }
 
         void addSink(std::shared_ptr<Sink> sink) {
