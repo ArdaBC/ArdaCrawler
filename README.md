@@ -1,7 +1,15 @@
 Nothing to see here (yet)
 
-.\build_and_run_tests.ps1
+.\run_main.ps1 --> QUICKLY COMPILE AND RUN MAIN
 
-To do:
+.\build.ps1 --> BUILD THE WHOLE APP
+
+To do (in order):
+
+Downloader: user agent, download path etc.
+
+Parser 
 
 Crawler
+
+main.cpp
