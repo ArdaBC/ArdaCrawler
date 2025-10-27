@@ -1,0 +1,11 @@
+# Ignore build folders
+build/
+*.exe
+*.dll
+*.obj
+*.o
+
+# IDE files
+.vscode/
+*.suo
+*.user
