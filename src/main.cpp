@@ -17,14 +17,14 @@ int main() {
     LOG_INFO("Downloader test started");
 
     ThreadPool pool;
-    pool.start(8);
+    pool.start(4);
 
-    Downloader& downloader = Downloader::instance(pool);
+    Downloader& downloader = Downloader::instance(pool, "Downloads", "Adam/0.1"); //full path or just folder
 
-    downloader.enqueue("https://www.google.com");
-    downloader.enqueue("https://www.wikipedia.org");
     downloader.enqueue("https://www.britannica.com");
-    downloader.enqueue("https://www.youtube.com");
+    downloader.enqueue("https://www.britannica.com/money/u3-unemployment-vs-u6-underemployment");
+    downloader.enqueue("https://www.britannica.com/event/2025-NBA-Betting-and-Gambling-Scandal");
+    downloader.enqueue("https://www.britannica.com/topic/National-Basketball-Association");
 
     pool.stop();
 

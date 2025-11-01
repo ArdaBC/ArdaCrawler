@@ -6,8 +6,6 @@ Nothing to see here (yet)
 
 To do (in order):
 
-Downloader: user agent, download path etc.
-
 Parser 
 
 Crawler

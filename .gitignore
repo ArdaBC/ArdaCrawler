@@ -1,7 +1,6 @@
 # Ignore build folders
 build/
 *.exe
-*.dll
 *.obj
 *.o
 
@@ -9,3 +8,5 @@ build/
 .vscode/
 *.suo
 *.user
+
+.log
